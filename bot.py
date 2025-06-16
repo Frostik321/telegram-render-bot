@@ -2,15 +2,12 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 import json
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Конфігурація
 DATA_FILE = 'data.json'
 USER_FILE = 'users.json'
-ADMIN_IDS = [1192117081]  # Ваш Telegram ID як адміна
-BOT_TOKEN = "7689001833:AAFIz0y9Z-WdjBT93mtC8dN-8uPIzVGXYRg"  # Ваш токен
+ADMIN_IDS = [1192117081]  # Ваш Telegram ID
+BOT_TOKEN = "7689001833:AAFIz0y9Z-WdjBT93mtC8dN-8uPIzVGXYRg"
 
 # Ініціалізація файлів
 for file in [DATA_FILE, USER_FILE]:
@@ -41,7 +38,7 @@ def save_users(users):
         json.dump(users, f, indent=2)
 
 # Команди бота
-async def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     users = load_users()
     if str(user.id) not in users:
@@ -51,7 +48,7 @@ async def start(update: Update, context: CallbackContext):
     else:
         await update.message.reply_text("👋 Ти вже зареєстрований.")
 
-async def new_task(update: Update, context: CallbackContext):
+async def new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args)
     if not text:
         await update.message.reply_text("❗️ Напиши задачу після команди /new")
@@ -67,14 +64,14 @@ async def new_task(update: Update, context: CallbackContext):
     save_data(data)
     await update.message.reply_text("✅ Завдання додано та очікує перевірки.")
 
-async def list_tasks(update: Update, context: CallbackContext):
+async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
     await update.message.reply_text(
         "🕳 Немає жодної задачі." if not data else 
         "\n".join(f"{i+1}. 📌 {t['text']} — {t['status']}" for i, t in enumerate(data))
     )
 
-async def confirm(update: Update, context: CallbackContext):
+async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("⛔️ У вас немає прав для цієї команди.")
         return
@@ -87,7 +84,7 @@ async def confirm(update: Update, context: CallbackContext):
     save_data(data)
     await update.message.reply_text(f"✅ Підтверджено {count} задач.")
 
-async def report(update: Update, context: CallbackContext):
+async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("⛔️ У вас немає прав для цієї команди.")
         return
@@ -107,7 +104,7 @@ async def report(update: Update, context: CallbackContext):
 
 # Запуск бота
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
     for cmd, handler in [
         ("start", start),
         ("new", new_task),
