@@ -65,4 +65,4 @@ def proof(update: Update, context: CallbackContext):
     update.message.reply_text(f"✅ Задача виконана: {task['text']}\n📎 {proof_text}")
 
 def main():
-    updater = Updater(TOKEN, use_context=True)_
+    updater = Updater(TOKEN, use_context=True)
