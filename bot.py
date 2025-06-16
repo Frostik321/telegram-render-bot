@@ -7,7 +7,7 @@ TOKEN = os.getenv("TOKEN")
 TASKS = []
 
 def start(update: Update, context: CallbackContext):
-    update.message.reply_text("👋 Привіт! Команди:
+    update.message.reply_text("👋 Привіт! Команди:)
 /new <текст задачі>
 /list – список задач
 /pending – на перевірку
