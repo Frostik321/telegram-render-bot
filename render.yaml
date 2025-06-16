@@ -4,7 +4,7 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
-    pythonVersion: 3.10
+    pythonVersion: 3.11  # Змінилося з 3.10
     envVars:
       - key: BOT_TOKEN
         value: "7689001833:AAFIz0y9Z-WdjBT93mtC8dN-8uPIzVGXYRg"
