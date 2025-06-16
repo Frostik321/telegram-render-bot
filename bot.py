@@ -13,7 +13,7 @@ BOT_TOKEN = "7689001833:AAFIz0y9Z-WdjBT93mtC8dN-8uPIzVGXYRg"
 for file in [DATA_FILE, USER_FILE]:
     if not os.path.exists(file):
         with open(file, 'w') as f:
-            json.dump([] if file == DATA_FILE else {}, f)
+            json.dump([], f) if file == DATA_FILE else json.dump({}, f)
 
 def load_data():
     try:
@@ -37,12 +37,15 @@ def save_users(users):
     with open(USER_FILE, 'w') as f:
         json.dump(users, f, indent=2)
 
-# Команди бота
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     users = load_users()
     if str(user.id) not in users:
-        users[str(user.id)] = {"name": user.first_name, "username": user.username or "", "role": "виконавець"}
+        users[str(user.id)] = {
+            "name": user.first_name,
+            "username": user.username or "",
+            "role": "виконавець"
+        }
         save_users(users)
         await update.message.reply_text("👋 Привіт! Тебе зареєстровано. Напиши /new <завдання>, щоб додати.")
     else:
@@ -66,10 +69,15 @@ async def new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
-    await update.message.reply_text(
-        "🕳 Немає жодної задачі." if not data else 
-        "\n".join(f"{i+1}. 📌 {t['text']} — {t['status']}" for i, t in enumerate(data))
+    if not data:
+        await update.message.reply_text("🕳 Немає жодної задачі.")
+        return
+    
+    tasks = "\n".join(
+        f"{i+1}. 📌 {task['text']} — {task['status']}"
+        for i, task in enumerate(data)
     )
+    await update.message.reply_text(tasks)
 
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
@@ -77,10 +85,12 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     data = load_data()
-    count = sum(1 for t in data if t["status"] == "pending")
-    for t in data:
-        if t["status"] == "pending":
-            t.update({"status": "approved", "confirmed": True})
+    count = 0
+    for task in data:
+        if task["status"] == "pending":
+            task["status"] = "approved"
+            task["confirmed"] = True
+            count += 1
     save_data(data)
     await update.message.reply_text(f"✅ Підтверджено {count} задач.")
 
@@ -92,28 +102,28 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
     users = load_users()
     payouts = {}
-    for t in filter(lambda x: x["confirmed"], data):
-        uid = str(t["user_id"])
-        payouts[uid] = payouts.get(uid, 0) + 1
-
-    await update.message.reply_text(
-        "💰 Звіт по оплаті:\n" + 
-        "\n".join(f"{users.get(uid, {}).get('name', 'невідомо')} — {count * 100} грн" 
-        for uid, count in payouts.items())
+    
+    for task in data:
+        if task["confirmed"]:
+            user_id = str(task["user_id"])
+            payouts[user_id] = payouts.get(user_id, 0) + 1
+    
+    report_text = "💰 Звіт по оплаті:\n" + "\n".join(
+        f"{users.get(user_id, {}).get('name', 'Невідомо')} — {count * 100} грн"
+        for user_id, count in payouts.items()
     )
+    await update.message.reply_text(report_text)
 
-# Запуск бота
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    for cmd, handler in [
-        ("start", start),
-        ("new", new_task),
-        ("list", list_tasks),
-        ("confirm", confirm),
-        ("report", report)
-    ]:
-        app.add_handler(CommandHandler(cmd, handler))
-    app.run_polling()
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("new", new_task))
+    application.add_handler(CommandHandler("list", list_tasks))
+    application.add_handler(CommandHandler("confirm", confirm))
+    application.add_handler(CommandHandler("report", report))
+    
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
