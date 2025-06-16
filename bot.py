@@ -1,162 +1,122 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Updater, CommandHandler, CallbackContext,
-    MessageHandler, Filters, CallbackQueryHandler, ConversationHandler
-)
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext
+import json
+import os
+from dotenv import load_dotenv
 
-TOKEN = "YOUR_TOKEN_HERE"  # заміни на свій токен
+load_dotenv()
 
-# === Дані ===
-tasks = []
-user_profiles = {}
-REGISTER_NAME, REGISTER_ROLE = range(2)
+# Конфігурація
+DATA_FILE = 'data.json'
+USER_FILE = 'users.json'
+ADMIN_IDS = [1192117081]  # Ваш Telegram ID як адміна
+BOT_TOKEN = "7689001833:AAFIz0y9Z-WdjBT93mtC8dN-8uPIzVGXYRg"  # Ваш токен
 
-# === Команди ===
-def start(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if user_id not in user_profiles:
-        update.message.reply_text("👤 Вітаю! Як вас звати?")
-        return REGISTER_NAME
-    update.message.reply_text("👋 Вітаю! Команди:\n/new <завдання>\n/list\n/pay <сума>\n/report – підсумок")
-    return ConversationHandler.END
+# Ініціалізація файлів
+for file in [DATA_FILE, USER_FILE]:
+    if not os.path.exists(file):
+        with open(file, 'w') as f:
+            json.dump([] if file == DATA_FILE else {}, f)
 
-def register_name(update: Update, context: CallbackContext):
-    context.user_data['name'] = update.message.text
-    update.message.reply_text("🧩 Яка ваша роль? (наприклад: виконавець, координатор)")
-    return REGISTER_ROLE
-
-def register_role(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    name = context.user_data['name']
-    role = update.message.text
-    user_profiles[user_id] = {
-        'name': name,
-        'role': role,
-        'username': update.effective_user.username,
-        'completed_tasks': 0,
-        'earned': 0.0
-    }
-    update.message.reply_text(f"✅ Зареєстровано як {name} ({role})\nМожна працювати 🙂")
-    return ConversationHandler.END
-
-def new_task(update: Update, context: CallbackContext):
-    text = ' '.join(context.args)
-    if not text:
-        update.message.reply_text("❗️ Напиши завдання після /new")
-        return
-    tasks.append({'text': text, 'status': 'нове', 'user': None, 'proof': None})
-    update.message.reply_text("✅ Завдання додано!")
-
-def list_tasks(update: Update, context: CallbackContext):
-    if not tasks:
-        update.message.reply_text("📭 Завдань немає.")
-        return
-    for i, t in enumerate(tasks):
-        msg = f"📌 {t['text']}\nСтан: {t['status']}"
-        buttons = []
-        if t['status'] == 'нове':
-            buttons.append(InlineKeyboardButton("🔧 Взятись", callback_data=f"take_{i}"))
-        if t['status'] == 'в роботі' and t['user'] == update.effective_user.first_name:
-            buttons.append(InlineKeyboardButton("📤 Додати підтвердження", callback_data=f"proof_{i}"))
-        if t['status'] == 'на перевірці':
-            buttons.append(InlineKeyboardButton("✅ Підтвердити", callback_data=f"confirm_{i}"))
-        update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup.from_button(buttons) if buttons else None)
-
-def button_callback(update: Update, context: CallbackContext):
-    query = update.callback_query
-    query.answer()
-    action, idx = query.data.split("_")
-    idx = int(idx)
-    task = tasks[idx]
-    uid = query.from_user.id
-
-    if action == "take":
-        task['status'] = 'в роботі'
-        task['user'] = uid
-        query.edit_message_text(f"🔧 {task['text']}\nВиконує: {user_profiles.get(uid, {}).get('name', '??')}")
-    elif action == "proof":
-        context.user_data['pending_proof'] = idx
-        query.message.reply_text(f"📎 Надішліть підтвердження виконання завдання: {task['text']}")
-    elif action == "confirm":
-        task['status'] = 'завершено'
-        user_id = task['user']
-        if user_id in user_profiles:
-            user_profiles[user_id]['completed_tasks'] += 1
-        query.edit_message_text(f"✅ Завершено: {task['text']}")
-
-def handle_proof(update: Update, context: CallbackContext):
-    if 'pending_proof' in context.user_data:
-        idx = context.user_data.pop('pending_proof')
-        tasks[idx]['status'] = 'на перевірці'
-        tasks[idx]['proof'] = True
-        update.message.reply_text("📥 Підтвердження прийнято. Очікує перевірки.")
-
-def pay(update: Update, context: CallbackContext):
+def load_data():
     try:
-        amount = float(context.args[0])
-    except:
-        update.message.reply_text("❗️ Напиши суму після /pay, наприклад: /pay 300")
-        return
+        with open(DATA_FILE, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return []
 
-    done_tasks = [t for t in tasks if t['status'] == 'завершено']
-    people = list(set(t['user'] for t in done_tasks if t['user']))
-    count = len(people)
+def save_data(data):
+    with open(DATA_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
 
-    if count == 0:
-        update.message.reply_text("Немає підтверджених виконавців.")
-        return
+def load_users():
+    try:
+        with open(USER_FILE, 'r') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
 
-    if count == 1:
-        share = round(amount * 0.8, 2)
-    elif count == 2:
-        share = round(amount * 0.4, 2)
-    elif count == 3:
-        share = round(amount * 0.3, 2)
+def save_users(users):
+    with open(USER_FILE, 'w') as f:
+        json.dump(users, f, indent=2)
+
+# Команди бота
+async def start(update: Update, context: CallbackContext):
+    user = update.effective_user
+    users = load_users()
+    if str(user.id) not in users:
+        users[str(user.id)] = {"name": user.first_name, "username": user.username or "", "role": "виконавець"}
+        save_users(users)
+        await update.message.reply_text("👋 Привіт! Тебе зареєстровано. Напиши /new <завдання>, щоб додати.")
     else:
-        share = round(amount / count, 2)
+        await update.message.reply_text("👋 Ти вже зареєстрований.")
 
-    text = "💸 Розподіл оплати:\n"
-    for uid in people:
-        if uid in user_profiles:
-            user_profiles[uid]['earned'] += share
-            name = user_profiles[uid]['name']
-            text += f"{name} — {share} грн\n"
-    update.message.reply_text(text)
+async def new_task(update: Update, context: CallbackContext):
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("❗️ Напиши задачу після команди /new")
+        return
+    
+    data = load_data()
+    data.append({
+        "text": text,
+        "user_id": update.effective_user.id,
+        "status": "pending",
+        "confirmed": False
+    })
+    save_data(data)
+    await update.message.reply_text("✅ Завдання додано та очікує перевірки.")
 
-def report(update: Update, context: CallbackContext):
-    text = "📊 Підсумок по користувачах:\n"
-    for uid, profile in user_profiles.items():
-        text += (
-            f"{profile['name']} ({profile['role']}) — "
-            f"{profile['completed_tasks']} задач, "
-            f"{profile['earned']} грн\n"
-        )
-    update.message.reply_text(text)
-
-# === Головна ===
-def main():
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    reg = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            REGISTER_NAME: [MessageHandler(Filters.text & ~Filters.command, register_name)],
-            REGISTER_ROLE: [MessageHandler(Filters.text & ~Filters.command, register_role)],
-        },
-        fallbacks=[],
+async def list_tasks(update: Update, context: CallbackContext):
+    data = load_data()
+    await update.message.reply_text(
+        "🕳 Немає жодної задачі." if not data else 
+        "\n".join(f"{i+1}. 📌 {t['text']} — {t['status']}" for i, t in enumerate(data))
     )
 
-    dp.add_handler(reg)
-    dp.add_handler(CommandHandler("new", new_task))
-    dp.add_handler(CommandHandler("list", list_tasks))
-    dp.add_handler(CommandHandler("pay", pay))
-    dp.add_handler(CommandHandler("report", report))
-    dp.add_handler(CallbackQueryHandler(button_callback))
-    dp.add_handler(MessageHandler(Filters.text | Filters.photo | Filters.document, handle_proof))
+async def confirm(update: Update, context: CallbackContext):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔️ У вас немає прав для цієї команди.")
+        return
+    
+    data = load_data()
+    count = sum(1 for t in data if t["status"] == "pending")
+    for t in data:
+        if t["status"] == "pending":
+            t.update({"status": "approved", "confirmed": True})
+    save_data(data)
+    await update.message.reply_text(f"✅ Підтверджено {count} задач.")
 
-    updater.start_polling()
-    updater.idle()
+async def report(update: Update, context: CallbackContext):
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("⛔️ У вас немає прав для цієї команди.")
+        return
+    
+    data = load_data()
+    users = load_users()
+    payouts = {}
+    for t in filter(lambda x: x["confirmed"], data):
+        uid = str(t["user_id"])
+        payouts[uid] = payouts.get(uid, 0) + 1
 
-if __name__ == "__main__":
+    await update.message.reply_text(
+        "💰 Звіт по оплаті:\n" + 
+        "\n".join(f"{users.get(uid, {}).get('name', 'невідомо')} — {count * 100} грн" 
+        for uid, count in payouts.items())
+    )
+
+# Запуск бота
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    for cmd, handler in [
+        ("start", start),
+        ("new", new_task),
+        ("list", list_tasks),
+        ("confirm", confirm),
+        ("report", report)
+    ]:
+        app.add_handler(CommandHandler(cmd, handler))
+    app.run_polling()
+
+if __name__ == '__main__':
     main()
