@@ -1,126 +1,160 @@
-
-import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, CallbackContext, MessageHandler, Filters, CallbackQueryHandler
-
-TOKEN = os.getenv("TOKEN")
-TASKS = []
-
-def start(update: Update, context: CallbackContext):
-   update.message.reply_text(
-    "👋 Привіт! Ось що вмію:\n"
-    "/new — додати нову задачу\n"
-    "/list — показати список\n"
-    "/pay — розподілити оплату"
+from telegram.ext import (
+    Updater, CommandHandler, CallbackContext,
+    MessageHandler, Filters, CallbackQueryHandler, ConversationHandler
 )
 
+TOKEN = "YOUR_TOKEN_HERE"  # заміни на свій токен
+
+# === Дані ===
+tasks = []
+user_profiles = {}
+REGISTER_NAME, REGISTER_ROLE = range(2)
+
+# === Команди ===
+def start(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id not in user_profiles:
+        update.message.reply_text("👤 Вітаю! Як вас звати?")
+        return REGISTER_NAME
+    update.message.reply_text("👋 Вітаю! Команди:\n/new <завдання>\n/list\n/pay <сума>\n/report – підсумок")
+    return ConversationHandler.END
+
+def register_name(update: Update, context: CallbackContext):
+    context.user_data['name'] = update.message.text
+    update.message.reply_text("🧩 Яка ваша роль? (наприклад: виконавець, координатор)")
+    return REGISTER_ROLE
+
+def register_role(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    name = context.user_data['name']
+    role = update.message.text
+    user_profiles[user_id] = {
+        'name': name,
+        'role': role,
+        'username': update.effective_user.username,
+        'completed_tasks': 0,
+        'earned': 0.0
+    }
+    update.message.reply_text(f"✅ Зареєстровано як {name} ({role})\nМожна працювати 🙂")
+    return ConversationHandler.END
 
 def new_task(update: Update, context: CallbackContext):
-    if not context.args:
-        return update.message.reply_text("Використання: /new <опис задачі>")
-    text = " ".join(context.args)
-    TASKS.append({"text": text, "status": "вільна", "by": [], "proof": [], "approved": False})
-    update.message.reply_text(f"✅ Додано задачу: {text}")
+    text = ' '.join(context.args)
+    if not text:
+        update.message.reply_text("❗️ Напиши завдання після /new")
+        return
+    tasks.append({'text': text, 'status': 'нове', 'user': None, 'proof': None})
+    update.message.reply_text("✅ Завдання додано!")
 
 def list_tasks(update: Update, context: CallbackContext):
-    if not TASKS:
-        return update.message.reply_text("Задач немає.")
-    for i, t in enumerate(TASKS):
-        s = t["status"]
-        workers = ", ".join(t["by"]) if t["by"] else "-"
-        msg = f"📌 {t['text']}
-👥 Виконують: {workers}
-📎 Підтверджень: {len(t['proof'])}
-✅ Підтверджено: {t['approved']}
-Статус: {s}"
-        if s == "вільна":
-            btn = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Взяти", callback_data=f"take_{i}")]])
-        else:
-            btn = None
-        update.message.reply_text(msg, reply_markup=btn)
+    if not tasks:
+        update.message.reply_text("📭 Завдань немає.")
+        return
+    for i, t in enumerate(tasks):
+        msg = f"📌 {t['text']}\nСтан: {t['status']}"
+        buttons = []
+        if t['status'] == 'нове':
+            buttons.append(InlineKeyboardButton("🔧 Взятись", callback_data=f"take_{i}"))
+        if t['status'] == 'в роботі' and t['user'] == update.effective_user.first_name:
+            buttons.append(InlineKeyboardButton("📤 Додати підтвердження", callback_data=f"proof_{i}"))
+        if t['status'] == 'на перевірці':
+            buttons.append(InlineKeyboardButton("✅ Підтвердити", callback_data=f"confirm_{i}"))
+        update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup.from_button(buttons) if buttons else None)
 
-def button_cb(update: Update, context: CallbackContext):
-    q = update.callback_query
-    q.answer()
-    if q.data.startswith("take_"):
-        i = int(q.data.split("_")[1])
-        user = q.from_user.first_name
-        if TASKS[i]["status"] == "вільна":
-            TASKS[i]["status"] = "в роботі"
-            TASKS[i]["by"].append(user)
-        elif user not in TASKS[i]["by"]:
-            TASKS[i]["by"].append(user)
-        q.edit_message_text(f"🔧 Задача: {TASKS[i]['text']}
-👥 Тепер виконує: {', '.join(TASKS[i]['by'])}")
+def button_callback(update: Update, context: CallbackContext):
+    query = update.callback_query
+    query.answer()
+    action, idx = query.data.split("_")
+    idx = int(idx)
+    task = tasks[idx]
+    uid = query.from_user.id
 
-def proof(update: Update, context: CallbackContext):
-    user = update.message.from_user.first_name
-    for i, t in enumerate(TASKS):
-        if user in t["by"] and t["status"] == "в роботі":
-            text = update.message.text or "[файл/фото]"
-            if update.message.photo:
-                text = "[Фото]"
-            elif update.message.document:
-                text = f"[Файл: {update.message.document.file_name}]"
-            t["proof"].append(f"{user}: {text}")
-            t["status"] = "очікує перевірки"
-            update.message.reply_text(f"✅ Підтвердження додано для задачі: {t['text']}")
-            return
-    update.message.reply_text("❗️У вас немає активної задачі або вона вже перевіряється.")
+    if action == "take":
+        task['status'] = 'в роботі'
+        task['user'] = uid
+        query.edit_message_text(f"🔧 {task['text']}\nВиконує: {user_profiles.get(uid, {}).get('name', '??')}")
+    elif action == "proof":
+        context.user_data['pending_proof'] = idx
+        query.message.reply_text(f"📎 Надішліть підтвердження виконання завдання: {task['text']}")
+    elif action == "confirm":
+        task['status'] = 'завершено'
+        user_id = task['user']
+        if user_id in user_profiles:
+            user_profiles[user_id]['completed_tasks'] += 1
+        query.edit_message_text(f"✅ Завершено: {task['text']}")
 
-def pending(update: Update, context: CallbackContext):
-    for i, t in enumerate(TASKS):
-        if t["status"] == "очікує перевірки" and not t["approved"]:
-            msg = f"🕵 Перевірка задачі: {t['text']}
-👥 Виконавці: {', '.join(t['by'])}
-📎 Підтвердження:"
-            for p in t["proof"]:
-                msg += f"
-— {p}"
-            btn = InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Прийняти", callback_data=f"approve_{i}"),
-                 InlineKeyboardButton("❌ Відхилити", callback_data=f"reject_{i}")]
-            ])
-            update.message.reply_text(msg, reply_markup=btn)
-
-def approve_reject_cb(update: Update, context: CallbackContext):
-    q = update.callback_query
-    q.answer()
-    if q.data.startswith("approve_") or q.data.startswith("reject_"):
-        i = int(q.data.split("_")[1])
-        decision = q.data.split("_")[0]
-        TASKS[i]["approved"] = (decision == "approve")
-        TASKS[i]["status"] = "виконано" if decision == "approve" else "в роботі"
-        text = "✅ Прийнято" if decision == "approve" else "❌ Відхилено"
-        q.edit_message_text(f"{text} задача: {TASKS[i]['text']}")
+def handle_proof(update: Update, context: CallbackContext):
+    if 'pending_proof' in context.user_data:
+        idx = context.user_data.pop('pending_proof')
+        tasks[idx]['status'] = 'на перевірці'
+        tasks[idx]['proof'] = True
+        update.message.reply_text("📥 Підтвердження прийнято. Очікує перевірки.")
 
 def pay(update: Update, context: CallbackContext):
-    if not context.args or not context.args[0].isdigit():
-        return update.message.reply_text("Використання: /pay <сума>")
-    total = int(context.args[0])
-    for t in TASKS:
-        if t["status"] == "виконано" and t["approved"]:
-            count = len(t["by"])
-            percent = 80 if count == 1 else (40 if count == 2 else 30)
-            share = round(total * percent / 100, 2)
-            msg = f"💸 Оплата задачі: {t['text']}
-"
-            for u in t["by"]:
-                msg += f"— {u}: {share}€
-"
-            update.message.reply_text(msg)
+    try:
+        amount = float(context.args[0])
+    except:
+        update.message.reply_text("❗️ Напиши суму після /pay, наприклад: /pay 300")
+        return
 
+    done_tasks = [t for t in tasks if t['status'] == 'завершено']
+    people = list(set(t['user'] for t in done_tasks if t['user']))
+    count = len(people)
+
+    if count == 0:
+        update.message.reply_text("Немає підтверджених виконавців.")
+        return
+
+    if count == 1:
+        share = round(amount * 0.8, 2)
+    elif count == 2:
+        share = round(amount * 0.4, 2)
+    elif count == 3:
+        share = round(amount * 0.3, 2)
+    else:
+        share = round(amount / count, 2)
+
+    text = "💸 Розподіл оплати:\n"
+    for uid in people:
+        if uid in user_profiles:
+            user_profiles[uid]['earned'] += share
+            name = user_profiles[uid]['name']
+            text += f"{name} — {share} грн\n"
+    update.message.reply_text(text)
+
+def report(update: Update, context: CallbackContext):
+    text = "📊 Підсумок по користувачах:\n"
+    for uid, profile in user_profiles.items():
+        text += (
+            f"{profile['name']} ({profile['role']}) — "
+            f"{profile['completed_tasks']} задач, "
+            f"{profile['earned']} грн\n"
+        )
+    update.message.reply_text(text)
+
+# === Головна ===
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
-    dp.add_handler(CommandHandler("start", start))
+
+    reg = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            REGISTER_NAME: [MessageHandler(Filters.text & ~Filters.command, register_name)],
+            REGISTER_ROLE: [MessageHandler(Filters.text & ~Filters.command, register_role)],
+        },
+        fallbacks=[],
+    )
+
+    dp.add_handler(reg)
     dp.add_handler(CommandHandler("new", new_task))
     dp.add_handler(CommandHandler("list", list_tasks))
-    dp.add_handler(CommandHandler("pending", pending))
     dp.add_handler(CommandHandler("pay", pay))
-    dp.add_handler(CallbackQueryHandler(button_cb, pattern="^take_"))
-    dp.add_handler(CallbackQueryHandler(approve_reject_cb, pattern="^(approve|reject)_"))
-    dp.add_handler(MessageHandler(Filters.text | Filters.photo | Filters.document, proof))
+    dp.add_handler(CommandHandler("report", report))
+    dp.add_handler(CallbackQueryHandler(button_callback))
+    dp.add_handler(MessageHandler(Filters.text | Filters.photo | Filters.document, handle_proof))
+
     updater.start_polling()
     updater.idle()
 
