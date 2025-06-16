@@ -7,11 +7,13 @@ TOKEN = os.getenv("TOKEN")
 TASKS = []
 
 def start(update: Update, context: CallbackContext):
-    update.message.reply_text("👋 Привіт! Команди:)
-/new <текст задачі>
-/list – список задач
-/pending – на перевірку
-/pay <сума> – розрахувати оплату")
+   update.message.reply_text(
+    "👋 Привіт! Ось що вмію:\n"
+    "/new — додати нову задачу\n"
+    "/list — показати список\n"
+    "/pay — розподілити оплату"
+)
+
 
 def new_task(update: Update, context: CallbackContext):
     if not context.args:
